@@ -1,0 +1,759 @@
+<script lang="ts">
+    import Panels from "@/components/libs/Panels.svelte";
+    import Panel from "@/components/libs/Panel.svelte";
+    import Item from "@/components/libs/Item.svelte";
+    import Input from "@/components/libs/Input.svelte";
+
+    import {panelKey, PANELS} from "@/constants/components/panels";
+    import {itemType} from "@/constants/components/input";
+    import {MEMOS_SORT_OPTIONS, CHECK_SYNC_MEMOS_OPTIONS, SYNC_PLAN_OPTIONS, VERSION_OPTIONS, TAG_FILTER_OPTIONS, IMGBED_RESOURCE_OPTIONS, syncPlanKey, tagFilterKey} from "@/constants/components/select";
+    import {API_VERSION} from "@/constants/memos";
+
+    import {IOptions} from "@/types/components/item.d";
+    import {IConfig} from "@/types/config/default.d";
+
+    import type PluginMemosSyncHelper from "@/index";
+    import {checkAccessToken, checkImgBed, resetLastSyncTime, test} from "@/main";
+    import {repair} from "@/controllers/plugin/common/fun/repair";
+
+
+    export let plugin: InstanceType<typeof PluginMemosSyncHelper>;
+    export let config: IConfig;
+
+    export let notebookOptions: IOptions;
+
+    let panels_focus_key = panelKey.base;
+
+    function updated() {
+        plugin.updateConfig(config);
+    }
+
+    let syncPlanText = ''; // 同步方案的说明文字
+    let docPathTitle = "文档路径";
+    let docPathIsShow = true;
+    let docPathIsRequired = false; // 文档路径是否必须
+    let docPathText = ""; // 文档路径的说明文字
+
+    let showUseTemplate = false; // 开关：使用模板
+
+    // let subjectPathIsShow = true; // 主题路径是否显示
+    let videoFormatsIsShow = true; // 需要优化的视频格式
+    let labelNameIsShow = true; // 上级标签名称
+
+    let tagFilterModeIsShow = true; // 是否显示标签过滤模式
+    let tagListIsShow = true; // 是否显示标签列表
+
+    let hideTagList = [
+        tagFilterKey.all,
+        tagFilterKey.syncNoTag,
+        tagFilterKey.notSyncNoTag
+    ]
+
+    $: {
+        switch (config.base.syncPlan) {
+            case syncPlanKey.dailyNotes:
+                syncPlanText = `请配置同步笔记本，如需更改DailyNote路径请配置文档路径`;
+                docPathTitle = "日记存放路径"
+                docPathIsShow = true;
+                docPathIsRequired = false;
+                showUseTemplate = true;
+                docPathText = "支持日期格式模板变量，与思源笔记设置一致";
+                break;
+            case syncPlanKey.singleDoc:
+                docPathTitle = "文档路径";
+                syncPlanText = `请配置同步笔记本，如需保存至指定文档下请配置文档路径`;
+                docPathIsShow = true;
+                docPathIsRequired = false;
+                showUseTemplate = false;
+                docPathText = "将同步数据保存在指定路径的文档下级"
+                break;
+            case syncPlanKey.sameDoc:
+                docPathTitle = "文档路径";
+                syncPlanText = `请配置同步笔记本以及文档路径`;
+                docPathIsShow = true;
+                docPathIsRequired = true;
+                showUseTemplate = false;
+                docPathText = "将同步数据保存在指定路径的文档中"
+                break;
+            default:
+                syncPlanText = '';
+        }
+
+        // subjectPathIsShow = config.advanced.isHandleBacklinks;
+        videoFormatsIsShow = config.advanced.isHandleVideo;
+        labelNameIsShow = config.advanced.isSuperLabel;
+
+        if (API_VERSION.V2_LabelFilter.includes(config.base.version)) {
+            tagFilterModeIsShow = true;
+            tagListIsShow = !hideTagList.includes(config.filter.tagFilterMode);
+        } else {
+            tagFilterModeIsShow = false;
+            tagListIsShow = false;
+        }
+    }
+
+
+</script>
+
+<Panels
+        focus={panels_focus_key}
+        let:focus={focusPanel}
+        panels={PANELS}
+>
+    <Panel display={PANELS[0].key === focusPanel}>
+        <Item
+                title="Access Token 校验"
+                text="校验 Access Token 是否有效"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.button}
+                    settingKey="Check"
+                    settingValue="校验"
+                    on:clicked={ checkAccessToken }
+            />
+        </Item>
+        <Item
+                title="Memos 版本"
+                text="当前服务器上运行的 Memos 版本"
+                isTip={false}
+                tipTest="v0.22及以上版本不适用于docker版思源笔记"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.select}
+                    settingKey="Version"
+                    settingValue={config.base.version}
+                    options={VERSION_OPTIONS}
+                    on:changed={e => {
+                        config.base.version = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="服务器地址"
+                text="访问 Memos 的完整地址，需包含 http:// 或 https://（末尾斜杠会自动处理）"
+                block={true}
+                isRequired={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="Host"
+                    settingValue={config.base.host}
+                    placeholder="示例：http://127.0.0.1:5230 或 https://demo.example.com"
+                    block={true}
+                    on:changed={e => {
+                        let val = (e.detail.value || '').trim();
+                        val = val.replace(/\/+$/, '');
+                        config.base.host = val;
+                        updated();
+                    }}
+            />
+        </Item>
+        <Item
+                title="Access Token"
+                text="请在 Memos 设置页面获取"
+                block={true}
+                isRequired={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="Token"
+                    settingValue={config.base.token}
+                    block={true}
+                    on:changed={e => {
+                        let val = (e.detail.value || '').trim();
+                        if (val.toLowerCase().startsWith('bearer ')) {
+                            val = val.slice(7).trim();
+                        }
+                        config.base.token = val;
+                        updated();
+                    }}
+            />
+        </Item>
+
+        <Item
+                title="同步方案"
+                text={syncPlanText}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.select}
+                    settingKey="SyncPlan"
+                    settingValue={config.base.syncPlan}
+                    options={SYNC_PLAN_OPTIONS}
+                    on:changed={e => {
+                        config.base.syncPlan = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+
+        <Item
+                title="同步笔记本"
+                text="保存同步数据的笔记本"
+                isRequired={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.select}
+                    settingKey="notebook"
+                    settingValue={config.base.notebook}
+                    options={notebookOptions}
+                    on:changed={e => {
+                        config.base.notebook = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title={docPathTitle}
+                text={docPathText}
+                isRequired={docPathIsRequired}
+                isShow={docPathIsShow}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="docPath"
+                    settingValue={config.base.docPath}
+                    placeholder="请以'/'开头进行填写"
+                    on:changed={e => {
+                        config.base.docPath = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="是否使用模板"
+                text="需自动配置笔记本设置中的模板路径"
+                isShow={showUseTemplate}
+                isTip={true}
+                tipTest="与降序排序功能冲突"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="UseTemplate"
+                    settingValue={config.base.useTemplate}
+                    on:changed={e => {
+                        config.base.useTemplate = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="是否使用图床"
+                text="开启后，命中的资源将上传至图床并在文档中引用图床链接"
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="ImgbedEnabled"
+                    settingValue={config.imgbed.enabled}
+                    on:changed={e => {
+                        config.imgbed.enabled = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        {#if config.imgbed.enabled}
+        <Item
+                title="图床上传 URL"
+                text="上传资源用的图床地址，需为思源可直达的地址，不含末尾 '/'"
+                isRequired={true}
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="ImgbedUploadUrl"
+                    settingValue={config.imgbed.uploadUrl}
+                    placeholder="如 http://cloudflare-imgbed:8080"
+                    on:changed={e => {
+                        config.imgbed.uploadUrl = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="外链访问 URL"
+                text="写入文档的图床链接前缀，留空则与上传 URL 相同"
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="ImgbedPublicUrl"
+                    settingValue={config.imgbed.publicUrl}
+                    placeholder="如 http://nas.example.com:7658"
+                    on:changed={e => {
+                        config.imgbed.publicUrl = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="图床 Access Token"
+                text="图床访问令牌，图床未启用鉴权时可留空"
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="ImgbedToken"
+                    settingValue={config.imgbed.token}
+                    placeholder="可留空"
+                    on:changed={e => {
+                        config.imgbed.token = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="上传至图床的资源"
+                text="仅命中勾选类型的资源会上传至图床"
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkboxGroup}
+                    settingKey="ImgbedResourceTypes"
+                    settingValue={config.imgbed.resourceTypes}
+                    options={IMGBED_RESOURCE_OPTIONS}
+                    on:changed={e => {
+                        config.imgbed.resourceTypes = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        {#if config.imgbed.resourceTypes.includes('custom')}
+        <Item
+                title="自定义文件后缀名"
+                text="分号分隔，命中的后缀按「自定义」类型处理"
+                isRequired={true}
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="ImgbedCustomExtensions"
+                    settingValue={config.imgbed.customExtensions}
+                    placeholder="如 psd;zip;apk"
+                    on:changed={e => {
+                        config.imgbed.customExtensions = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        {/if}
+        <Item
+                title="图床连通性检验"
+                text="上传探针文件验证图床是否可用"
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.button}
+                    settingKey="ImgbedProbe"
+                    settingValue="检验"
+                    on:clicked={() => { checkImgBed(); }}
+            />
+        </Item>
+        {/if}
+
+        <Item
+                title="资源保存路径"
+                text="保存 Memos 资源的路径"
+                isRequired={true}
+                isShow={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="resourceSavePath"
+                    settingValue={config.base.resourceSavePath}
+                    placeholder="开头和结尾请不要保存 '/'"
+                    on:changed={e => {
+                        config.base.resourceSavePath = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+
+        <Item
+                title="数据排序"
+                text="根据更新日期对同步的数据进行升序或降序排序"
+                isTip={true}
+                tipTest="当同步方案为 {SYNC_PLAN_OPTIONS[1].text} 时，本功能不生效"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.select}
+                    settingKey="MemosSort"
+                    settingValue={config.base.memosSort}
+                    options={MEMOS_SORT_OPTIONS}
+                    on:changed={e => {
+                        config.base.memosSort = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+
+        <Item
+                title="检查可同步数据"
+                text="是否在思源笔记启动后自动检查可同步的数据"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.select}
+                    settingKey="checkMemosUpdate"
+                    settingValue={config.base.checkSyncMemos}
+                    options={CHECK_SYNC_MEMOS_OPTIONS}
+                    on:changed={e => {
+                        config.base.checkSyncMemos = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+    </Panel>
+
+    <Panel display={PANELS[1].key === focusPanel}>
+        <Item
+                title="修复"
+                text="修复旧版插件同步的数据以兼容嵌入内容功能"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.button}
+                    settingKey="Repair"
+                    settingValue="修复"
+                    on:clicked={ repair }
+            />
+        </Item>
+
+        <Item
+                title="格式化标题时间"
+                text="默认为 <code class='fn__code'>YYYY-MM-DD HH:mm:ss</code>"
+                isRequired={true}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="formatDataTime"
+                    settingValue={config.advanced.formatDataTime}
+                    on:changed={e => {
+                        config.advanced.formatDataTime = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="显示创建时间"
+                text="同步时写入创建时间"
+                isTip={true}
+                tipTest="不支持v0.21.0及以下版本"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="ShowCreateTimeSwitch"
+                    settingValue={config.advanced.showCreateTime}
+                    on:changed={e => {
+                        config.advanced.showCreateTime = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="识别超链接"
+                text="识别超链接并转换成可点击打开的样式"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="Href"
+                    settingValue={config.advanced.isHandleHref}
+                    on:changed={e => {
+                        config.advanced.isHandleHref = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="识别双向链接"
+                text="识别双向链接符号<code class='fn__code'>((</code> <code class='fn__code'>))</code>并自动关联对应文档"
+                isTip={true}
+                tipTest="只支持文档块的匹配"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="Links"
+                    settingValue={config.advanced.isHandleBacklinks}
+                    on:changed={e => {
+                        config.advanced.isHandleBacklinks = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+<!--        <Item-->
+<!--                title="主题路径"-->
+<!--                text="配置保存识别双向链接时自动创建的文档路径"-->
+<!--                isTip={true}-->
+<!--                tipTest="若本项为空，则自动创建的文档会直接保存在同步笔记本下"-->
+<!--                block={true}-->
+<!--                isShow={subjectPathIsShow}-->
+<!--        >-->
+<!--            <Input-->
+<!--                    slot="input"-->
+<!--                    type={itemType.text}-->
+<!--                    settingKey="SubjectPath"-->
+<!--                    settingValue={config.advanced.subjectPath}-->
+<!--                    placeholder="请以 / 开头进行填写"-->
+<!--                    block={true}-->
+<!--                    on:changed={e => {-->
+<!--                        config.advanced.subjectPath = e.detail.value;-->
+<!--                        updated();-->
+<!--                    }-->
+<!--                }-->
+<!--            />-->
+<!--        </Item>-->
+        <Item
+                title="优化视频样式"
+                text="识别指定格式的视频文件并转换成可点击播放的样式"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="ImproveVideoStyle"
+                    settingValue={config.advanced.isHandleVideo}
+                    on:changed={e => {
+                        config.advanced.isHandleVideo = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="需要优化的视频格式"
+                text="配置需要转换的视频文件格式，以英文分号 <code class='fn__code'>;</code> 分隔"
+                block={true}
+                isRequired={true}
+                isShow={videoFormatsIsShow}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.textarea}
+                    settingKey="VideoFormats"
+                    settingValue={config.advanced.videoFormats ? config.advanced.videoFormats : ""}
+                    block={true}
+                    height={100}
+                    on:changed={e => {
+                        config.advanced.videoFormats = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="优化标签管理"
+                text="为所有的标签增加一个统一的上级标签"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="LabelTop"
+                    settingValue={config.advanced.isSuperLabel}
+                    on:changed={e => {
+                        config.advanced.isSuperLabel = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="标签名称"
+                text="自定义上级标签的名称"
+                isRequired={true}
+                isShow={labelNameIsShow}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="LabelName"
+                    settingValue={config.advanced.labelName}
+                    placeholder="请确认开头和结尾没有 '/'"
+                    on:changed={e => {
+                        config.advanced.labelName = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+    </Panel>
+
+    <Panel display={PANELS[2].key === focusPanel}>
+        <Item
+                title="上次同步时间"
+                text="用于增量同步。若你手动删除了已同步笔记，可先重置这里，再执行一次同步以重新全量导入"
+
+        >
+            <Input
+                    slot="input"
+                    type={itemType.text}
+                    settingKey="LastSyncTime"
+                    settingValue={config.filter.lastSyncTime}
+                    placeholder="YYYY/MM/DD HH:mm:ss"
+                    on:changed={e => {
+                        config.filter.lastSyncTime = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+
+        <Item
+                title="同步模式：全量（一次性）"
+                text="开启后，下一次同步将清空笔记本下的日记目录并重建全部历史数据（图床资源复用已上传外链，不会重复上传），完成后自动恢复为增量模式"
+                isTip={true}
+                tipTest="全量同步会重新处理所有历史 Memo，耗时较长"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="ForceFullSync"
+                    settingValue={config.filter.forceFullSync}
+                    on:changed={e => {
+                        config.filter.forceFullSync = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="重新全量同步"
+                text="将上次同步时间重置为初始值。适用于手动删除已同步笔记后，需要重新导入全部历史 Memo 的情况"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.button}
+                    settingKey="ResetLastSyncTime"
+                    settingValue="重置并准备重同步"
+                    on:clicked={ () => resetLastSyncTime(plugin) }
+            />
+        </Item>
+
+        <Item
+                title="标签过滤模式"
+                text="对数据进行标签过滤"
+                isShow={tagFilterModeIsShow}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.select}
+                    settingKey="tagFilterMode"
+                    settingValue={config.filter.tagFilterMode}
+                    options={TAG_FILTER_OPTIONS}
+                    on:changed={e => {
+                        config.filter.tagFilterMode = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+
+        <Item
+                title="配置标签"
+                text="配置允许同步或不允许同步的标签，以英文分号 <code class='fn__code'>;</code> 分隔"
+                block={true}
+                isRequired={true}
+                isShow={tagListIsShow}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.textarea}
+                    settingKey="tagList"
+                    settingValue={config.filter.tagList ? config.filter.tagList : ""}
+                    block={true}
+                    height={100}
+                    on:changed={e => {
+                        config.filter.tagList = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+    </Panel>
+
+    <Panel display={PANELS[3].key === focusPanel}>
+        <Item
+                title="调试模式"
+                text="开启后将在控制台输出操作日志"
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="Debug"
+                    settingValue={config.debug.isDebug}
+                    on:changed={e => {
+                        config.debug.isDebug = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                text="禁用后，在调试时将不会自动更新上次同步时间"
+                title="允许更新上次同步时间"
+                isShow={config.debug.isDebug}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.checkbox}
+                    settingKey="autoUpdateTime"
+                    settingValue={config.debug.isAutoUpdateTime}
+                    on:changed={e => {
+                        config.debug.isAutoUpdateTime = e.detail.value;
+                        updated();
+                    }
+                }
+            />
+        </Item>
+        <Item
+                title="测试"
+                text="测试功能"
+                isShow={false}
+        >
+            <Input
+                    slot="input"
+                    type={itemType.button}
+                    settingKey="Test"
+                    settingValue="测试"
+                    on:clicked={ test }
+            />
+        </Item>
+    </Panel>
+</Panels>

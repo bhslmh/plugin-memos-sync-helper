@@ -1,0 +1,591 @@
+import {STORAGE_NAME} from "@/constants";
+import {sync_status} from "@/constants/main";
+import {Icons} from "@/constants/assets/icons";
+import {syncPlanKey, tagFilterKey, checkSyncMemosKey} from "@/constants/components/select";
+import {API_VERSION} from "@/constants/memos";
+import {IItemCondition} from "@/types/plugin";
+import {lsNotebooks, pushErrMsg, pushMsg} from "@/controllers/siyuan/api";
+import {MemosServer} from "@/controllers/memos";
+import {Requests} from "@/utils/requests";
+import {ImgBedService} from "@/controllers/imgbed";
+import {debugMessage, debugLogBuffer, isEmptyValue} from "@/utils";
+import PluginMemosSyncHelper, {isMobile, pluginConfigData, topBarElement} from "@/index";
+import {PluginMaster} from "@/controllers/plugin";
+import {IConfig} from "@/types/config/default";
+import moment from "moment";
+
+
+
+class PlugConfig {
+    /**
+     * 检查插件配置是否正确
+     */
+    static async check() {
+        // 自动净化 host 和 token
+        if (pluginConfigData?.base?.host) {
+            pluginConfigData.base.host = pluginConfigData.base.host.trim().replace(/\/+$/, '');
+        }
+        if (pluginConfigData?.base?.token) {
+            let token = pluginConfigData.base.token.trim();
+            if (token.toLowerCase().startsWith('bearer ')) {
+                token = token.slice(7).trim();
+            }
+            pluginConfigData.base.token = token;
+        }
+
+        const noUseTagList = [
+            tagFilterKey.all,
+            tagFilterKey.syncNoTag,
+            tagFilterKey.notSyncNoTag
+        ]
+
+        const requiredItems = [
+            {
+                value: pluginConfigData.base.version,
+                text: "Memos 版本"
+            },
+            {
+                value: pluginConfigData.base.host,
+                text: "服务器地址"
+            },
+            {
+                value: pluginConfigData.base.token,
+                text: "Access Token"
+            },
+            {
+                value: pluginConfigData.base.syncPlan,
+                text: "同步方案"
+            },
+            {
+                value: pluginConfigData.base.notebook,
+                text: "同步笔记本"
+            },
+            {
+                value: pluginConfigData.base.resourceSavePath,
+                text: "资源保存路径"
+            },
+            {
+                value: pluginConfigData.base.memosSort,
+                text: "数据排序"
+            },
+            {
+                value: pluginConfigData.base.checkSyncMemos,
+                text: "检查同步数据"
+            },
+            {
+                value: pluginConfigData.advanced.formatDataTime,
+                text: "格式化标题时间"
+            },
+            {
+                value: pluginConfigData.advanced.showCreateTime,
+                text: "显示创建时间开关"
+            },
+            {
+                value: pluginConfigData.advanced.isHandleHref,
+                text: "识别超链接开关"
+            },
+            {
+                value: pluginConfigData.advanced.isHandleBacklinks,
+                text: "识别双向链接开关"
+            },
+            {
+                value: pluginConfigData.advanced.isHandleVideo,
+                text: "优化视频样式开关"
+            },
+            {
+                value: pluginConfigData.advanced.isSuperLabel,
+                text: "优化标签管理开头"
+            },
+            {
+                value: pluginConfigData.filter.lastSyncTime,
+                text: "上次同步时间"
+            },
+            {
+                value: pluginConfigData.debug.isDebug,
+                text: "调试模式开关"
+            }
+        ]
+
+        const conditionRequiredItems: IItemCondition[] = [
+            {
+                text: "是否使用模板",
+                flag: pluginConfigData.base.syncPlan === syncPlanKey.dailyNotes,
+                value: pluginConfigData.base.useTemplate,
+            },
+            {
+                text: "文档路径",
+                flag: pluginConfigData.base.syncPlan === syncPlanKey.sameDoc,
+                value: pluginConfigData.base.docPath
+            },
+            {
+                text: "需要优化的视频样式",
+                flag: pluginConfigData.advanced.isHandleVideo,
+                value: pluginConfigData.advanced.videoFormats
+            },
+            {
+                text: "标签名称",
+                flag: pluginConfigData.advanced.isSuperLabel,
+                value: pluginConfigData.advanced.labelName
+            },
+            {
+                text: "是否允许自动更新上次同步时间",
+                flag: pluginConfigData.debug.isDebug,
+                value: pluginConfigData.debug.isAutoUpdateTime
+            },
+            {
+                text: "标签过滤模式",
+                flag: API_VERSION.V2_LabelFilter.includes(pluginConfigData.base.version),
+                value: pluginConfigData.filter.tagFilterMode
+            },
+            {
+                text: "标签列表",
+                flag: !noUseTagList.includes(pluginConfigData.filter.tagFilterMode),
+                value: pluginConfigData.filter.tagList
+            },
+            {
+                text: "图床上传 URL",
+                flag: pluginConfigData.imgbed?.enabled === true,
+                value: pluginConfigData.imgbed?.uploadUrl
+            },
+            {
+                text: "自定义文件后缀名",
+                flag: pluginConfigData.imgbed?.enabled === true && (pluginConfigData.imgbed?.resourceTypes || []).includes("custom"),
+                value: pluginConfigData.imgbed?.customExtensions
+            }
+        ]
+
+        const inputItems =[
+            {
+                flag: true,
+                value: pluginConfigData.base.host,
+                text: "服务器路径",
+                check: [null, null]
+            },
+            {
+                flag: pluginConfigData.base.syncPlan === syncPlanKey.sameDoc,
+                value: pluginConfigData.base.docPath,
+                text: "文档路径",
+                check: [true, false]
+            },
+            {
+                flag: true,
+                value: pluginConfigData.base.resourceSavePath,
+                text: "资源保存路径",
+                check: [false, false]
+            },
+            // {
+            //     flag: pluginConfigData.advanced.isHandleBacklinks,
+            //     value: pluginConfigData.advanced.subjectPath,
+            //     text: "主题路径",
+            //     check: [true, false]
+            // },
+            {
+                flag: pluginConfigData.advanced.isSuperLabel,
+                value: pluginConfigData.advanced.labelName,
+                text: "标签名称",
+                check: [false, false]
+            }
+        ]
+
+        // 判断必填项是否存在
+        for (const item of requiredItems) {
+            if (isEmptyValue(item.value)) {
+                return {
+                    flag: false,
+                    tip: `请检查 ${item.text} 是否配置！`
+                };
+            }
+        }
+
+        // 判断某种条件的必填项是否存在
+        for (const item of conditionRequiredItems) {
+            if (item.flag && isEmptyValue(item.value)) {
+                return {
+                    flag: false,
+                    tip: `请检查 ${item.text} 是否配置！`
+                };
+            }
+        }
+
+        for (let item of inputItems){
+            if (!item.flag) {
+                continue;
+            }
+            if (item.check[0] !== null) {
+                if (item.check[0] === true && !isEmptyValue(item.value) && item.value.charAt(0) !== '/') {
+                    debugMessage(pluginConfigData.debug.isDebug, `${item.text} 应当以'/'开头`);
+                    return {
+                        flag: false,
+                        tip: `请检查 ${item.text} 是否配置正确！`
+                    };
+                }
+                if (item.check[0] === false && !isEmptyValue(item.value) &&  item.value.charAt(0) === '/') {
+                    debugMessage(pluginConfigData.debug.isDebug, `${item.text} 不应以'/'开头`);
+                    return {
+                        flag: false,
+                        tip: `请检查 ${item.text} 是否配置正确！`
+                    };
+                }
+            }
+
+            if (item.check[1] !== null) {
+                if (item.check[1] === true && !isEmptyValue(item.value) && item.value.charAt(item.value.length - 1) !== '/') {
+                    debugMessage(pluginConfigData.debug.isDebug, `${item.text} 应当以'/'结尾`);
+                    return {
+                        flag: false,
+                        tip: `请检查 ${item.text} 是否配置正确！`
+                    };
+                }
+                if (item.check[1] === false && !isEmptyValue(item.value) && item.value.charAt(item.value.length - 1) === '/') {
+                    debugMessage(pluginConfigData.debug.isDebug, `${item.text} 不应以'/'结尾`);
+                    return {
+                        flag: false,
+                        tip: `请检查 ${item.text} 是否配置正确！`
+                    };
+                }
+            }
+        }
+
+        // 判断同步笔记本是否存在
+        let notebooks = await lsNotebooks();
+        let notebookIdList: string[] = notebooks.notebooks.map(notebook => notebook.id);
+        let flag = notebookIdList.includes(pluginConfigData.base.notebook);
+        if (flag) {
+            return {
+                flag: true,
+                tip: "插件配置检查通过"
+            }
+        } else {
+            return {
+                flag: false,
+                tip: "请检查 同步笔记本 是否配置！"
+            }
+        }
+    }
+}
+
+
+class Sync {
+    private static status: string | number;
+    private static iconBefore: string;
+
+    /**
+     * 开始同步
+     */
+    static startSync() {
+        Sync.status = sync_status.downloading;
+        Sync.backupIcon();
+        Sync.updateIcon();
+    }
+
+    /**
+     * 同步出错
+     */
+    static syncError() {
+        Sync.status = sync_status.completed;
+        Sync.recoveryIcon();
+    }
+
+    /**
+     * 同步成功
+     */
+    static syncSuccess() {
+        Sync.status = sync_status.completed;
+        Sync.updateIcon();
+    }
+
+    /**
+     * 可以同步
+     */
+    static canSync() {
+        Sync.status = sync_status.waiting;
+        Sync.updateIcon();
+    }
+
+    /**
+     * 是否在同步数据
+     */
+    static isSyncing() {
+        return Sync.status === sync_status.downloading;
+    }
+
+    /**
+     * 更新图标
+     * @private
+     */
+    private static updateIcon() {
+        let svg: any;
+
+        if (Sync.status === sync_status.waiting) {
+            svg = Icons.getIcon().waiting.use;
+        } else if (Sync.status === sync_status.downloading) {
+            svg = Icons.getIcon().downloading.use;
+        } else if (Sync.status === sync_status.completed) {
+            svg = Icons.getIcon().completed.use;
+        }
+
+        if (isMobile) {
+            svg += '<span class="b3-menu__label">Memos 同步助手</span>'
+        }
+
+        topBarElement.innerHTML = svg;
+    }
+
+    /**
+     * 备份图标
+     * @private
+     */
+    private static backupIcon() {
+        Sync.iconBefore = topBarElement.innerHTML;
+    }
+
+    /**
+     * 恢复图标
+     * @private
+     */
+    private static recoveryIcon() {
+        if (!isEmptyValue(Sync.iconBefore)) {
+            topBarElement.innerHTML = Sync.iconBefore;
+        }
+    }
+}
+
+
+/**
+ * 检查插件配置
+ */
+export async function checkConfig() {
+    debugMessage(pluginConfigData.debug.isDebug, "正在检查插件配置...");
+
+    const result = await PlugConfig.check();
+
+    if (!result.flag) {
+        await pushErrMsg(result.tip);
+    } else {
+        await pushMsg(result.tip);
+    }
+
+    debugMessage(pluginConfigData.debug.isDebug, "检查完成");
+
+    return result;
+}
+
+/**
+ * 校验授权码
+ */
+export async function checkAccessToken() {
+    debugMessage(pluginConfigData.debug.isDebug, "正在校验授权码...");
+
+    if (!pluginConfigData?.base?.host || !pluginConfigData.base.host.trim()) {
+        await pushErrMsg("请先配置服务器地址！");
+        return;
+    }
+    if (!pluginConfigData?.base?.token || !pluginConfigData.base.token.trim()) {
+        await pushErrMsg("请先配置 Access Token！");
+        return;
+    }
+
+    // 净化 host 和 token
+    pluginConfigData.base.host = pluginConfigData.base.host.trim().replace(/\/+$/, '');
+    let token = pluginConfigData.base.token.trim();
+    if (token.toLowerCase().startsWith('bearer ')) {
+        token = token.slice(7).trim();
+    }
+    pluginConfigData.base.token = token;
+
+    try {
+        Requests.errorLog = [];
+        let result = await MemosServer.checkAccessToken();
+        if (result) {
+            const userData = await MemosServer.getUserData();
+            if (userData?.name) {
+                await pushMsg(`校验通过！已连接到 Memos 用户: ${userData.name}`);
+            } else {
+                await pushMsg("校验通过，Memos 连接正常！");
+            }
+        } else {
+            const detail = Requests.drainErrorSummary();
+            await pushErrMsg(`校验失败，请检查服务器地址和授权码是否配置正确${detail ? `（${detail}）` : ''}`);
+        }
+    } catch (error: any) {
+        await pushErrMsg(`校验失败: ${error?.message || error}`);
+    }
+
+    debugMessage(pluginConfigData.debug.isDebug, "校验完成");
+}
+
+/**
+ * 检验图床连通性：上传探针文件验证上传通道
+ */
+export async function checkImgBed() {
+    const imgbed = pluginConfigData.imgbed;
+    if (imgbed?.enabled !== true) {
+        await pushErrMsg("请先开启图床功能！");
+        return;
+    }
+    if (isEmptyValue(imgbed.uploadUrl) || !imgbed.uploadUrl.trim()) {
+        await pushErrMsg("请先填写图床上传 URL！");
+        return;
+    }
+
+    await pushMsg("正在检测图床连通性...");
+
+    // 1x1 PNG 探针
+    const probe = Uint8Array.from(
+        atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="),
+        c => c.charCodeAt(0)
+    );
+    const probeFilename = `imgbed-probe-${Date.now()}.png`;
+    const blob = new Blob([probe], {type: "image/png"});
+    const link = await ImgBedService.upload(blob, probeFilename);
+
+    if (!link) {
+        const detail = ImgBedService.lastError ? `（${ImgBedService.lastError}）` : '';
+        await pushErrMsg(`图床连接失败${detail}。请检查图床上传 URL 是否可达，或开启调试模式查看详细日志`);
+        return;
+    }
+
+    // 探针文件清理（删除失败不影响连通性结论）
+    // 用上传响应返回的真实 fileId（/file/<上传时间戳>_<文件名> 的最后一段）——
+    // 图床存储时会给文件名加时间戳前缀，用裸文件名删除会命中「不存在」假成功
+    const realFileId = link.split('/').pop();
+    let cleaned = true;
+    try {
+        const deleteUrl = `${imgbed.uploadUrl.trim().replace(/\/+$/, "")}/api/manage/delete/${realFileId}`;
+        const token = (imgbed.token || "").trim();
+        const headers: Record<string, string> = {};
+        if (token) {
+            headers["Authorization"] = `Bearer ${token}`;
+        }
+        const deleteResponse = await Requests.deleteUrl(deleteUrl, headers);
+        cleaned = deleteResponse.ok;
+    } catch {
+        cleaned = false;
+    }
+
+    if (cleaned) {
+        await pushMsg(`图床连通性正常！探针文件已清理`);
+    } else {
+        await pushMsg(`图床连通性正常！探针清理失败，请到图床面板删除 ${probeFilename}`);
+    }
+}
+
+export async function resetLastSyncTime(plugin: InstanceType<typeof PluginMemosSyncHelper>) {
+    const config: IConfig = pluginConfigData;
+    config.filter.lastSyncTime = "2021-12-08 00:00:00";
+    await plugin.updateConfig(config);
+    await pushMsg("已重置上次同步时间，请再次执行同步以重新全量导入历史 Memo");
+}
+
+/**
+ * 检查是否存在可更新的数据
+ */
+export async function checkNew() {
+    if (pluginConfigData.base.checkSyncMemos === checkSyncMemosKey.no) {
+        return;
+    }
+
+    debugMessage(pluginConfigData.debug.isDebug, "正在检查是否存在可同步的新数据...");
+
+    const checkResult = await PlugConfig.check();
+
+    if (!checkResult.flag) {
+        debugMessage(pluginConfigData.debug.isDebug, checkResult.tip);
+        return;
+    }
+
+    let result = await MemosServer.checkNew();
+    if (result) {
+        Sync.canSync();
+        await pushMsg("检查到可同步的新数据");
+    }
+
+    debugMessage(pluginConfigData.debug.isDebug, "检查完成");
+}
+
+/**
+ * 测试功能
+ */
+export async function test() {
+    debugMessage(pluginConfigData.debug.isDebug, "开始测试", "", true);
+
+    debugMessage(pluginConfigData.debug.isDebug, "测试结束", "", true);
+}
+
+
+export async function main(plugin: InstanceType<typeof PluginMemosSyncHelper>) {
+    try {
+        // 防抖处理
+        if (Sync.isSyncing()) {
+            await pushMsg("同步中，请稍候");
+            return;
+        } else {
+            await pushMsg("正在进行同步前检查");
+            Sync.startSync();
+        }
+
+        debugLogBuffer.length = 0;
+        debugMessage(pluginConfigData.debug.isDebug, "同步起点 lastSyncTime", pluginConfigData.filter.lastSyncTime);
+
+        // 检查配置项
+        const configIsOk = await checkConfig();
+        if (!configIsOk.flag) {
+            Sync.syncError();
+            return;
+        }
+
+        const hasNew = await MemosServer.checkNew();
+        if (hasNew) {
+            // 同步
+            await pushMsg(pluginConfigData.filter.forceFullSync ? "开始同步（本次为全量模式）" : "开始同步");
+            await PluginMaster.runSync();
+            await pushMsg("同步完成！");
+        } else {
+            await pushMsg("暂无新数据！");
+        }
+
+        // 修改上次同步时间
+        if (!(pluginConfigData.debug.isDebug && pluginConfigData.debug.isAutoUpdateTime === false)) {
+            debugMessage(pluginConfigData.debug.isDebug, "正在修改上次同步时间……");
+
+            let config : IConfig = pluginConfigData;
+
+            await new Promise<void>((resolve) => {
+                setTimeout(() => {
+                    config.filter.lastSyncTime = moment().format("YYYY-MM-DD HH:mm:ss");
+                    debugMessage(pluginConfigData.debug.isDebug, "配置", config);
+                    resolve(); // 标志 Promise 的状态已经改变
+                }, 1000);
+            });
+
+            const updateResponse = await plugin.updateConfig(config);
+            debugMessage(pluginConfigData.debug.isDebug, "上次同步时间修改完成！写盘响应", updateResponse);
+        }
+
+        Sync.syncSuccess();
+
+        // 全量模式为一次性：同步成功后恢复增量
+        if (pluginConfigData.filter.forceFullSync) {
+            pluginConfigData.filter.forceFullSync = false;
+            await plugin.updateConfig(pluginConfigData);
+            debugMessage(pluginConfigData.debug.isDebug, "全量模式已完成，已恢复为增量同步");
+        }
+
+    } catch (error) {
+        Sync.syncError();
+        await pushErrMsg(`${STORAGE_NAME}：${error}`);
+        throw new Error(error);
+    } finally {
+        // 调试模式下将本次同步日志落盘，便于不开开发者工具时取证
+        if (pluginConfigData?.debug?.isDebug && debugLogBuffer.length > 0) {
+            try {
+                await plugin.saveData("debug-log", {
+                    time: moment().format("YYYY-MM-DD HH:mm:ss"),
+                    logs: [...debugLogBuffer]
+                });
+            } catch (logError) {
+                console.error("调试日志落盘失败", logError);
+            }
+        }
+    }
+}

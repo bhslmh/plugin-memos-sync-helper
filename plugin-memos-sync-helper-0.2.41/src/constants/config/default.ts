@@ -1,0 +1,48 @@
+import {IConfig} from "@/types/config/default";
+
+import {memosSortKey, checkSyncMemosKey, syncPlanKey, tagFilterKey} from "@/constants/components/select"
+import {DEFAULT_VERSION} from "@/constants/memos";
+
+export const DEFAULT_CONFIG: IConfig = {
+    base: {
+        version: DEFAULT_VERSION,
+        host: "",
+        token: "",
+        syncPlan: syncPlanKey.dailyNotes,
+        notebook: "",
+        docPath: "",
+        useTemplate: false,
+        resourceSavePath: "assets/memos/resources",
+        memosSort: memosSortKey.asc,
+        checkSyncMemos: checkSyncMemosKey.start
+    },
+    advanced: {
+        formatDataTime: "YYYY-MM-DD HH:mm:ss",
+        showCreateTime: false,
+        isHandleHref: false,
+        isHandleBacklinks: false,
+        isHandleVideo: false,
+        videoFormats: "mp4",
+        isSuperLabel: false,
+        labelName: "",
+    },
+    filter: {
+        lastSyncTime: "2021-12-08 00:00:00",
+        forceFullSync: false,
+        tagFilterMode: tagFilterKey.all,
+        tagList: ""
+    },
+    debug: {
+        isDebug: false,
+        isAutoUpdateTime: false
+    },
+    imgbed: {
+        enabled: false,
+        uploadUrl: "",
+        publicUrl: "",
+        token: "",
+        resourceTypes: ["image", "video"],
+        customExtensions: "",
+        links: {}
+    }
+}
